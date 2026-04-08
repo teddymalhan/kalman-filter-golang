@@ -1,6 +1,7 @@
 package matrix_test
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -75,4 +76,56 @@ func TestAddSub(t *testing.T) {
 	diff := matrix.Sub(b, a)
 	wantDiff := matrix.NewFromSlice(2, 2, []float64{4, 4, 4, 4})
 	assertMatrix(t, "sub", diff, wantDiff)
+}
+
+func TestMulParallel(t *testing.T) {
+	a := matrix.NewFromSlice(2, 2, []float64{1, 2, 3, 4})
+	b := matrix.NewFromSlice(2, 2, []float64{5, 6, 7, 8})
+	got := matrix.MulParallel(a, b)
+	want := matrix.NewFromSlice(2, 2, []float64{19, 22, 43, 50})
+	assertMatrix(t, "mul_parallel", got, want)
+}
+
+// randomMatrix returns a deterministically filled n×n matrix.
+func randomMatrix(n int) *matrix.Matrix {
+	m := matrix.New(n, n)
+	v := 1.0
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			m.Set(i, j, v)
+			v = v*1.1 + 0.3
+			if v > 1e6 {
+				v = 1.0
+			}
+		}
+	}
+	return m
+}
+
+var benchSizes = []int{10, 100, 500}
+
+func BenchmarkMul(b *testing.B) {
+	for _, n := range benchSizes {
+		a := randomMatrix(n)
+		bm := randomMatrix(n)
+		b.Run(fmt.Sprintf("%dx%d", n, n), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				matrix.Mul(a, bm)
+			}
+		})
+	}
+}
+
+func BenchmarkMulParallel(b *testing.B) {
+	for _, n := range benchSizes {
+		a := randomMatrix(n)
+		bm := randomMatrix(n)
+		b.Run(fmt.Sprintf("%dx%d", n, n), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				matrix.MulParallel(a, bm)
+			}
+		})
+	}
 }

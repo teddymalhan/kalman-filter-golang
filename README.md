@@ -156,6 +156,52 @@ go test ./...
 
 The `kalman` package test verifies the filter output against the reference values from KalmanFilter.NET to within a tolerance of `0.01`.
 
+## Concurrency & Benchmarks
+
+Two parallelism strategies are implemented:
+
+### Strategy 1 — Intra-operation: `MulParallel`
+
+`matrix.MulParallel(a, b)` spawns one goroutine per output row. Each goroutine independently computes `C[i][:]` with no locking needed, since output rows are disjoint memory regions. This yields meaningful speedup only for large matrices — for the 2×2 matrices inside the Kalman filter itself, goroutine overhead dominates.
+
+### Strategy 2 — Inter-instance: Parallel Filter Targets
+
+Multiple independent `kalman.Filter` instances (e.g. N radar targets) can run concurrently. Each instance holds its own state with no shared mutable data, so no synchronisation is needed between goroutines.
+
+### Running Benchmarks
+
+```bash
+# Statistical ns/op benchmarks via go test
+go test -bench=. -benchmem ./matrix/...
+go test -bench=. -benchmem ./kalman/...
+
+# Wall-clock comparison table
+go run ./benchmark
+```
+
+### Benchmark Results
+
+**Machine:** Apple M4, Go 1.25, `GOMAXPROCS=10`
+
+#### Matrix Multiplication — `Mul` vs `MulParallel`
+
+| Size    | `Mul` serial (ns/op) | `MulParallel` (ns/op) | Speedup |
+|---------|----------------------|------------------------|---------|
+| 10×10   | 1,253                | 3,025                  | 0.41×   |
+| 100×100 | 1,125,386            | 233,381                | 4.82×   |
+| 500×500 | 146,174,946          | 17,823,202             | 8.20×   |
+
+> `MulParallel` is **slower** than `Mul` for 10×10 because goroutine spawn overhead (~2 µs) far exceeds the cost of 10 dot products. Crossover is around n ≈ 50. The Kalman filter internally uses 2×2 matrices and therefore always calls `Mul`.
+
+#### Kalman Filter Throughput — 1,000 targets × 50 predict+update steps
+
+| Mode     | Time (ns/op) | Speedup |
+|----------|-------------|---------|
+| Serial   | 61,459,700  | 1.00×   |
+| Parallel | 51,428,753  | 1.19×   |
+
+> The modest 1.19× speedup reflects that each filter step operates on tiny 2×2 matrices — there is very little CPU work per goroutine, so scheduling 1,000 goroutines provides only marginal benefit. For larger state-space filters (e.g. 9×9 INS), where each predict+update call does O(n³) work, inter-instance parallelism scales near-linearly with `GOMAXPROCS`.
+
 ## References
 
 - [KalmanFilter.NET](https://www.kalmanfilter.net) — single-page overview and step-by-step tutorial

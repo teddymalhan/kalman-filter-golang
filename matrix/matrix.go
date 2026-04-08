@@ -4,6 +4,7 @@ package matrix
 import (
 	"fmt"
 	"math"
+	"sync"
 )
 
 // Matrix is a row-major 2D matrix.
@@ -107,6 +108,32 @@ func Mul(a, b *Matrix) *Matrix {
 			}
 		}
 	}
+	return c
+}
+
+// MulParallel returns the matrix product a × b using one goroutine per output row.
+// For small matrices (n < ~64) the goroutine overhead exceeds the savings;
+// use Mul for those cases.
+func MulParallel(a, b *Matrix) *Matrix {
+	if a.Cols != b.Rows {
+		panic(fmt.Sprintf("matrix: incompatible sizes %dx%d × %dx%d", a.Rows, a.Cols, b.Rows, b.Cols))
+	}
+	c := New(a.Rows, b.Cols)
+	var wg sync.WaitGroup
+	wg.Add(a.Rows)
+	for i := 0; i < a.Rows; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			for k := 0; k < a.Cols; k++ {
+				aik := a.Data[i][k]
+				for j := 0; j < b.Cols; j++ {
+					c.Data[i][j] += aik * b.Data[k][j]
+				}
+			}
+		}()
+	}
+	wg.Wait()
 	return c
 }
 
