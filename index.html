@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kalman Filter: Interactive Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a1a;
+      padding: 2rem 1rem;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 10px;
+      padding: 1.75rem 2rem;
+      max-width: 800px;
+      margin: 0 auto 1.25rem;
+    }
+
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 0.88rem;
+      margin-top: 0.3rem;
+      line-height: 1.5;
+    }
+
+    /* Canvas */
+    #canvas {
+      display: block;
+      width: 100%;
+      border-radius: 6px;
+      background: #fafafa;
+      border: 1px solid #e4e7ec;
+    }
+
+    /* Controls */
+    .controls {
+      margin-top: 1.25rem;
+      display: grid;
+      grid-template-columns: 220px 1fr 52px;
+      align-items: center;
+      gap: 0.6rem 0.75rem;
+    }
+
+    .controls label {
+      font-size: 0.875rem;
+      color: #444;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 5px;
+      border-radius: 3px;
+      background: #d1d5db;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #1a6fc4;
+      cursor: pointer;
+      border: 2px solid #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+
+    .val {
+      font-size: 0.875rem;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      color: #222;
+      font-weight: 600;
+    }
+
+    /* Stats */
+    .stats {
+      margin-top: 1.25rem;
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #888;
+    }
+
+    .stat-val {
+      font-size: 1.25rem;
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      color: #c0392b;
+    }
+    .stat-val.filtered { color: #1a6fc4; }
+
+    /* Legend */
+    .legend {
+      margin-top: 1rem;
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+      color: #555;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .l-line {
+      display: inline-block;
+      width: 22px;
+      height: 2px;
+      border-radius: 1px;
+      vertical-align: middle;
+    }
+    .l-dash {
+      display: inline-block;
+      width: 22px;
+      height: 0;
+      border-top: 2px dashed #aaa;
+      vertical-align: middle;
+    }
+    .l-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* Explainer */
+    .explainer {
+      font-size: 0.85rem;
+      color: #555;
+      line-height: 1.65;
+    }
+
+    .explainer strong { color: #222; }
+
+    .explainer table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.75rem;
+    }
+
+    .explainer th, .explainer td {
+      padding: 0.45rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+      font-size: 0.82rem;
+    }
+    .explainer th {
+      font-weight: 600;
+      color: #333;
+      background: #f7f8fa;
+    }
+    .explainer td:first-child { color: #1a6fc4; font-weight: 600; font-family: monospace; }
+  </style>
+</head>
+<body>
+
+  <!-- Header card -->
+  <div class="card">
+    <h1>Kalman Filter: Interactive Demo</h1>
+    <p class="subtitle">
+      2D object tracking compiled to WebAssembly from Go. Drag the sliders to
+      tune the filter in real time and watch the RMSE change.
+    </p>
+  </div>
+
+  <!-- Visualisation card -->
+  <div class="card">
+    <canvas id="canvas"></canvas>
+
+    <div class="controls">
+      <label>Process noise &sigma;<sub>a</sub></label>
+      <input type="range" id="sa" min="0.05" max="4" step="0.05" value="0.5">
+      <span class="val" id="sa-val">0.50</span>
+
+      <label>Measurement noise &sigma;<sub>r</sub></label>
+      <input type="range" id="sr" min="1" max="50" step="0.5" value="15">
+      <span class="val" id="sr-val">15.0</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-label">Measurement RMSE</span>
+        <span class="stat-val" id="meas-rmse">...</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Filtered RMSE</span>
+        <span class="stat-val filtered" id="filt-rmse">...</span>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item">
+        <span class="l-dash"></span> Ground truth
+      </div>
+      <div class="legend-item">
+        <span class="l-dot" style="background:rgba(200,60,60,0.7)"></span> Raw measurements
+      </div>
+      <div class="legend-item">
+        <span class="l-line" style="background:#1a6fc4; height:3px"></span> Kalman filtered
+      </div>
+    </div>
+  </div>
+
+  <!-- Explainer card -->
+  <div class="card">
+    <div class="explainer">
+      <p>
+        The filter tracks an object moving in 2D with a <strong>constant-velocity model</strong>.
+        Only noisy <em>position</em> measurements are fed in; velocity is inferred by the filter.
+      </p>
+
+      <table>
+        <thead>
+          <tr><th>Slider</th><th>What it controls</th><th>Effect when increased</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>&sigma;<sub>a</sub></td>
+            <td>Process noise (random acceleration std-dev)</td>
+            <td>Filter expects more manoeuvring and tracks measurements more aggressively</td>
+          </tr>
+          <tr>
+            <td>&sigma;<sub>r</sub></td>
+            <td>Measurement noise (sensor std-dev)</td>
+            <td>Filter trusts the sensor less; output is smoother but lags sudden turns</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="wasm_exec.js"></script>
+  <script>
+    /* WASM bootstrap */
+    const go = new Go();
+    let wasmReady = false;
+
+    /* High-DPI canvas setup */
+    const canvas = document.getElementById('canvas');
+    const dpr = window.devicePixelRatio || 1;
+    const CSS_W = 740;
+    const CSS_H = 370;
+    canvas.width  = CSS_W * dpr;
+    canvas.height = CSS_H * dpr;
+    canvas.style.width  = CSS_W + 'px';
+    canvas.style.height = CSS_H + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    /* All drawing uses CSS-pixel coordinates */
+    const W = CSS_W;
+    const H = CSS_H;
+    const PAD = 28;
+
+    /* Loading message */
+    ctx.fillStyle = '#bbb';
+    ctx.font = '14px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Loading WebAssembly...', W / 2, H / 2);
+
+    WebAssembly.instantiateStreaming(fetch('kalman.wasm'), go.importObject)
+      .then(result => {
+        go.run(result.instance);
+        wasmReady = true;
+        redraw();
+      })
+      .catch(err => {
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = '#c0392b';
+        ctx.font = '13px system-ui';
+        ctx.fillText('Failed to load WASM: ' + err.message, W / 2, H / 2);
+        console.error(err);
+      });
+
+    /* Coordinate helpers */
+    function computeBBox(arrays) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const pts of arrays) {
+        for (const p of pts) {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        }
+      }
+      const padX = (maxX - minX) * 0.04 || 10;
+      const padY = (maxY - minY) * 0.08 || 10;
+      return { minX: minX - padX, maxX: maxX + padX, minY: minY - padY, maxY: maxY + padY };
+    }
+
+    function toCanvas(x, y, bb) {
+      const cx = PAD + (x - bb.minX) / (bb.maxX - bb.minX) * (W - 2 * PAD);
+      const cy = PAD + (1 - (y - bb.minY) / (bb.maxY - bb.minY)) * (H - 2 * PAD);
+      return [cx, cy];
+    }
+
+    /* Drawing helpers */
+    function drawPolyline(pts, bb, strokeStyle, lineWidth, lineDash) {
+      if (!pts.length) return;
+      ctx.save();
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.setLineDash(lineDash || []);
+      ctx.beginPath();
+      const [x0, y0] = toCanvas(pts[0].x, pts[0].y, bb);
+      ctx.moveTo(x0, y0);
+      for (let i = 1; i < pts.length; i++) {
+        const [xi, yi] = toCanvas(pts[i].x, pts[i].y, bb);
+        ctx.lineTo(xi, yi);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawDots(pts, bb, fillStyle, r) {
+      ctx.save();
+      ctx.fillStyle = fillStyle;
+      for (const p of pts) {
+        const [cx, cy] = toCanvas(p.x, p.y, bb);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    /* Main redraw */
+    function redraw() {
+      if (!wasmReady) return;
+
+      const sigmaA = parseFloat(document.getElementById('sa').value);
+      const sigmaR = parseFloat(document.getElementById('sr').value);
+
+      document.getElementById('sa-val').textContent = sigmaA.toFixed(2);
+      document.getElementById('sr-val').textContent = sigmaR.toFixed(1);
+
+      const data = JSON.parse(kalmanSimulate(sigmaA, sigmaR));
+      const bb = computeBBox([data.truth, data.measured]);
+
+      ctx.clearRect(0, 0, W, H);
+
+      /* Background grid */
+      ctx.save();
+      ctx.strokeStyle = '#f0f0f0';
+      ctx.lineWidth = 1;
+      const gridStep = 50;
+      for (let gx = PAD; gx <= W - PAD; gx += gridStep) {
+        ctx.beginPath(); ctx.moveTo(gx, PAD); ctx.lineTo(gx, H - PAD); ctx.stroke();
+      }
+      for (let gy = PAD; gy <= H - PAD; gy += gridStep) {
+        ctx.beginPath(); ctx.moveTo(PAD, gy); ctx.lineTo(W - PAD, gy); ctx.stroke();
+      }
+      ctx.restore();
+
+      /* Painter's order: measurements behind, truth, then filtered on top */
+      drawDots(data.measured, bb, 'rgba(200, 60, 60, 0.5)', 3.5);
+      drawPolyline(data.truth, bb, '#b0b0b0', 1.5, [7, 5]);
+      drawPolyline(data.filtered, bb, '#1a6fc4', 2.8);
+
+      /* Start and end markers on the filtered path */
+      const first = toCanvas(data.filtered[0].x, data.filtered[0].y, bb);
+      const last  = toCanvas(data.filtered[data.filtered.length - 1].x,
+                             data.filtered[data.filtered.length - 1].y, bb);
+      ctx.save();
+      ctx.fillStyle = '#1a6fc4';
+      for (const [cx, cy] of [first, last]) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      /* RMSE display */
+      document.getElementById('meas-rmse').textContent = data.measRMSE.toFixed(2);
+      document.getElementById('filt-rmse').textContent = data.filtRMSE.toFixed(2);
+    }
+
+    /* Slider listeners */
+    document.getElementById('sa').addEventListener('input', redraw);
+    document.getElementById('sr').addEventListener('input', redraw);
+  </script>
+</body>
+</html>
